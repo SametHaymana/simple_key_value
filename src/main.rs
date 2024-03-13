@@ -1,4 +1,4 @@
-use futures::future::join_all;
+use tokio::sync::Semaphore;
 use std::time::Instant;
 use std::{
     hash::{DefaultHasher, Hash, Hasher},
@@ -69,9 +69,9 @@ impl Storage for DB {
 
         let mut content = String::new();
 
-        match file.read_to_string((&mut content)).await {
+        match file.read_to_string(&mut content).await {
             Ok(_) => Some(content),
-            Err(e) => None,
+            Err(_) => None,
         }
     }
 }
@@ -100,39 +100,40 @@ impl DB {
     }
 }
 
-async fn write_5m_keys_parallel(db: Arc<DB>) {
+async fn write_keys_in_batches(db: Arc<DB>, batch_size: usize, concurrency_limit: usize) {
+    let semaphore = Arc::new(Semaphore::new(concurrency_limit));
     let mut handles = Vec::new();
 
-    let start = Instant::now();
-    let key_count = 5_000_000;
-
-    for i in 0..key_count {
+    for i in 0..5_000_000 {
         let db = db.clone();
         let key = i.to_string();
         let val = i.to_string();
+        let permit = semaphore.clone().acquire_owned().await.unwrap();
 
-        // Spawn a new task for each write operation
-        let handle = tokio::task::spawn(async move { db.set(&key, &val).await });
+        let handle = tokio::task::spawn(async move {
+            db.set(&key, &val).await;
+            drop(permit); 
+        });
+
         handles.push(handle);
+
+        if handles.len() >= batch_size {
+            for handle in handles.drain(..) {
+                let _ = handle.await;
+            }
+        }
     }
 
-    // Wait for all tasks to complete
-    let results = join_all(handles).await;
-    let duration = start.elapsed();
-
-    // Optionally, process the results of each task
-    for result in results {
-        match result {
-            Ok(_) => println!("Writen {} keys in {} ms", key_count, duration.as_millis()),
-            Err(e) => eprintln!("Error writing to the database: {:?}", e),
-        }
+    // Wait for any remaining tasks to complete
+    for handle in handles {
+        let _ = handle.await;
     }
 }
 
 async fn avarage_time_taken(db: Arc<DB>) {
     let mut total = 0;
     let mut count = 0;
-    for i in 1000..100000 {
+    for _ in 1000..500_000 {
         let start = Instant::now();
         let _ = db.get(&"10000".to_string()).await;
         let duration = start.elapsed();
@@ -156,10 +157,13 @@ async fn main() {
 
     let db_arc = Arc::new(db);
 
-    write_5m_keys_parallel(db_arc.clone()).await;
+    write_keys_in_batches(db_arc.clone(), 10_000, 1000).await;
 
 
     avarage_time_taken(db_arc.clone()).await;
+
+    let key = 1000000.to_string();
+    println!("{:?}", db_arc.get(&key).await);
 }
 
 #[cfg(test)]
