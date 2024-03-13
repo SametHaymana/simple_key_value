@@ -1,4 +1,3 @@
-use tokio::sync::Semaphore;
 use std::time::Instant;
 use std::{
     hash::{DefaultHasher, Hash, Hasher},
@@ -8,6 +7,7 @@ use std::{
 };
 use tokio::fs::{self, File, OpenOptions};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::sync::Semaphore;
 
 struct DB {
     storage: PathBuf,
@@ -53,6 +53,7 @@ impl Storage for DB {
             let _ = file.write_all(val.as_bytes()).await.ok();
         }
     }
+
     async fn retrive(&self, key: &String) -> Option<String> {
         let file_name = format!(
             "{}/{}",
@@ -104,6 +105,8 @@ async fn write_keys_in_batches(db: Arc<DB>, batch_size: usize, concurrency_limit
     let semaphore = Arc::new(Semaphore::new(concurrency_limit));
     let mut handles = Vec::new();
 
+    let start = Instant::now();
+
     for i in 0..5_000_000 {
         let db = db.clone();
         let key = i.to_string();
@@ -112,7 +115,7 @@ async fn write_keys_in_batches(db: Arc<DB>, batch_size: usize, concurrency_limit
 
         let handle = tokio::task::spawn(async move {
             db.set(&key, &val).await;
-            drop(permit); 
+            drop(permit);
         });
 
         handles.push(handle);
@@ -128,6 +131,13 @@ async fn write_keys_in_batches(db: Arc<DB>, batch_size: usize, concurrency_limit
     for handle in handles {
         let _ = handle.await;
     }
+
+    let duration = start.elapsed();
+
+    println!(
+        "Writing time for 50_000_000 key, take {:?} microseconds",
+        duration.as_millis()
+    );
 }
 
 async fn avarage_time_taken(db: Arc<DB>) {
@@ -144,7 +154,7 @@ async fn avarage_time_taken(db: Arc<DB>) {
 
     if count > 0 {
         let average = total / count;
-        println!("Average time taken: {} microseconds", average);
+        println!("Average reading time taken: {} microseconds", average);
     } else {
         println!("No operations were performed.");
     }
@@ -157,8 +167,7 @@ async fn main() {
 
     let db_arc = Arc::new(db);
 
-    write_keys_in_batches(db_arc.clone(), 10_000, 1000).await;
-
+    write_keys_in_batches(db_arc.clone(), 100_000, 10_000).await;
 
     avarage_time_taken(db_arc.clone()).await;
 
