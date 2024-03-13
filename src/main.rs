@@ -152,16 +152,12 @@ async fn avarage_time_taken(db: Arc<DB>) {
 #[tokio::main]
 async fn main() {
     // Benchmarking
-    // Write 5m random key value pairs
-    // Read one random key value pairs
-
     let db = DB::new("test".to_string()).await;
 
     let db_arc = Arc::new(db);
 
-    //write_5m_keys_parallel(db_arc.clone()).await;
+    write_5m_keys_parallel(db_arc.clone()).await;
 
-    //println!("Writen 5 m key in db");
 
     avarage_time_taken(db_arc.clone()).await;
 }
